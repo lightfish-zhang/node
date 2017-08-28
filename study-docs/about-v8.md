@@ -54,6 +54,7 @@ only valid inside of the HandleScope active during their creation.
 For passing a local handle to an outer HandleScope, an EscapableHandleScope
 and its Escape() method must be used.
     如果，一个local handle传参到外部的HandleScope或者EscapableHandleScope，必须被使用它的Escape()方法
+    （闭包）
 
 Persistent handles can be used when storing objects across several
 independent operations and have to be explicitly deallocated when they're no
@@ -81,10 +82,14 @@ template <class T>
 using Handle = Local<T>;
 ```
 
+- 上面提到一个javascript的高级特性，闭包，实现外部作用域访问内部作用域中变量的方法。
+    + 通过函数式编程，高阶函数返回一个函数对象，该函数引用到高阶函数中声明的变量，外部作用域中，可以通过这个中间函数访问或修改高阶函数的变量。
+    + 它的问题在于，一旦有变量引用这个中间函数，这个中间函数将不会释放，高阶函数这个原始作用域也不会释放，作用于中产生的内存占用就不会得到释放，除非不再有引用，才会逐步释放。
+
 #### 对象的操作符重载
 
 - 得益于C++的面向对象特性的强大，可以重载对象的操作符，v8是使用C++编写的引擎，自然使用这个特性来实现js的一些语法
-- 例子，javascript是使用“＋”来实现字符串的拼接，代码在`v8/src/inspector/string-16.h`，下面贴出部分代码，加上笔者的注释
+- 例子，javascript是使用“＋”来实现字符串对象的拼接，v8中字符串对象的代码在`v8/src/inspector/string-16.h`，下面贴出部分代码，加上笔者的注释
 
 ```cpp
 class String16 {
@@ -122,6 +127,8 @@ class String16 {
 }
 
 ```
+
+- 题外话，v8的字符串对象的操作，对于前端项目的平常需求是满足的，但是对于node而言，高并发、大流量的网络字节的处理，是使用stream与Buffer来处理的，而Buffer对象的内存分配不是在v8的堆内存中，而是Node在C++层面实现的，使用slab分配机制，笔者以后详细分析。
 
 ### 虚拟机
 
