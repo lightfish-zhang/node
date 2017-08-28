@@ -83,4 +83,43 @@ using Handle = Local<T>;
 
 #### 对象的操作符重载
 
-- 得益于C++的面向对象特性的强大，可以重载对象的操作符
+- 得益于C++的面向对象特性的强大，可以重载对象的操作符，v8是使用C++编写的引擎，自然使用这个特性来实现js的一些语法
+
+- 例子，javascript是使用“＋”来实现字符串的拼接，代码在`v8/src/inspector/string-16.h`，下面贴出部分代码，加上笔者的笔记
+
+```cpp
+class String16 {
+ public:
+
+    //explicit 避免隐式转换
+  explicit String16(const std::basic_string<UChar>& impl) : m_impl(impl) {}
+
+    // 重载操作符=，传入常量的对象的引用
+  String16& operator=(const String16& other) {
+    m_impl = other.m_impl;
+    hash_code = other.hash_code;
+    return *this;
+  }
+
+    // 重载操作符=，转移&&, 传入String16对象的右值
+  String16& operator=(String16&& other) {
+      // 左值引用转换为右值引用
+    m_impl = std::move(other.m_impl);
+    hash_code = other.hash_code;
+    return *this;
+  }
+
+    // 重载操作符+，右操作数是String16对象引用
+  inline String16 operator+(const String16& other) const {
+    return String16(m_impl + other.m_impl);
+  }
+    // 重载操作符+, 左操作数是char*字符指针，右操作数是String16对象引用
+  inline String16 operator+(const char* a, const String16& b) {
+    return String16(a) + b;
+  }
+
+ private:
+  std::basic_string<UChar> m_impl; // 私有m_impl实质上使用C++标准库的string对象，string对象的操作符+也是被重载过的
+}
+
+```
