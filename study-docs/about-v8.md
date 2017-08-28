@@ -14,7 +14,7 @@ V8 是Google开发的JavaScript引擎，提供JavaScript运行环境，可以说
 
 ### 对象、作用域与垃圾回收
 
-- 在v8源码中，`include/v8.h`定义里模板类`class Local`，代码中有注释，做翻译解释如下
+- 在v8源码中，`include/v8.h`定义里模板类`class Local`，代码中有注释，笔者添加中文翻译
 
 ```cpp
 /**
@@ -84,8 +84,7 @@ using Handle = Local<T>;
 #### 对象的操作符重载
 
 - 得益于C++的面向对象特性的强大，可以重载对象的操作符，v8是使用C++编写的引擎，自然使用这个特性来实现js的一些语法
-
-- 例子，javascript是使用“＋”来实现字符串的拼接，代码在`v8/src/inspector/string-16.h`，下面贴出部分代码，加上笔者的笔记
+- 例子，javascript是使用“＋”来实现字符串的拼接，代码在`v8/src/inspector/string-16.h`，下面贴出部分代码，加上笔者的注释
 
 ```cpp
 class String16 {
@@ -122,4 +121,66 @@ class String16 {
   std::basic_string<UChar> m_impl; // 私有m_impl实质上使用C++标准库的string对象，string对象的操作符+也是被重载过的
 }
 
+```
+
+### 虚拟机
+
+- `Isolate`，一个 Isolate 是一个独立的虚拟机。对应一个或多个线程。但同一时刻 只能被一个线程进入。所有的 Isolate 彼此之间是完全隔离的, 它们不能够有任何共享的资源。如果不显示创建 Isolate, 会自动创建一个默认的 Isolate。
+
+> An isolate is a VM instance with its own heap. It represents an isolated instance of the V8 engine. V8 isolates have completely separate states. Objects from one isolate must not be used in other isolates.
+
+- 上文中提到的`Handle`, `Scope`, `Context`都是在`Isolate`内部的
+- 源码`v8/src/isolate.h`与`v8/src/isolate.cc`，以下下贴出笔者觉得有意思的部分代码
+
+```cpp
+class Isolate {
+
+  // True if at least one thread Enter'ed this isolate.
+  // 线程进入前调用，确认能否进入
+  bool IsInUse() { return entry_stack_ != NULL; }
+
+  // Access to top context (where the current function object was created).
+  // 返回当前上下文context，当function创建时，需要使用context
+  Context* context() { return thread_local_top_.context_; }
+
+  // Returns the global object of the current context. It could be
+  // a builtin object, or a JS global object.
+  // 获取全局对象
+  inline Handle<JSGlobalObject> global_object();
+
+  // Promise的相关函数
+  // Push and pop a promise and the current try-catch handler.
+  void PushPromise(Handle<JSObject> promise);
+  void PopPromise();
+
+  // Return the relevant Promise that a throw/rejection pertains to, based
+  // on the contents of the Promise stack
+  Handle<Object> GetPromiseOnStackOnThrow();
+
+  // Heuristically guess whether a Promise is handled by user catch handler
+  bool PromiseHasUserDefinedRejectHandler(Handle<Object> promise);
+
+}
+```
+
+- 将以上代码的promise相关部分展开看，这部分应该和node的线程库Libuv有关联
+
+```cpp
+void Isolate::PushPromise(Handle<JSObject> promise) {
+  ThreadLocalTop* tltop = thread_local_top();
+  PromiseOnStack* prev = tltop->promise_on_stack_;
+  Handle<JSObject> global_promise = global_handles()->Create(*promise);
+  tltop->promise_on_stack_ = new PromiseOnStack(global_promise, prev);
+}
+
+
+void Isolate::PopPromise() {
+  ThreadLocalTop* tltop = thread_local_top();
+  if (tltop->promise_on_stack_ == NULL) return;
+  PromiseOnStack* prev = tltop->promise_on_stack_->prev();
+  Handle<Object> global_promise = tltop->promise_on_stack_->promise();
+  delete tltop->promise_on_stack_;
+  tltop->promise_on_stack_ = prev;
+  global_handles()->Destroy(global_promise.location());
+}
 ```
