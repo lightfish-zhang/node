@@ -54,7 +54,7 @@ only valid inside of the HandleScope active during their creation.
 For passing a local handle to an outer HandleScope, an EscapableHandleScope
 and its Escape() method must be used.
     如果，一个local handle传参到外部的HandleScope或者EscapableHandleScope，必须被使用它的Escape()方法
-    （闭包）
+    （闭包的特性，escape逃逸是什么意思？）
 
 Persistent handles can be used when storing objects across several
 independent operations and have to be explicitly deallocated when they're no
