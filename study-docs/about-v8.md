@@ -306,3 +306,13 @@ void Isolate::PopPromise() {
   global_handles()->Destroy(global_promise.location());
 }
 ```
+
+
+### 学习心得
+
+- 水平有限，没有在v8没找到链式作用域的`lookup`的清晰的代码
+
+## 参考资料
+
+- [deep-into-node](https://yjhjstz.gitbooks.io/deep-into-node)
+- 《深入浅出node》- 朴灵
