@@ -14,6 +14,9 @@ V8 是Google开发的JavaScript引擎，提供JavaScript运行环境，可以说
 
 ### 对象、作用域与垃圾回收
 
+### 对象
+
+- V8 为了对内存分配进行管理，GC 需要对 V8 中的 所有对象进行跟踪，而对象都是用 Handle 方式引用的，所以 GC 需要对 Handle 进行管理，这样 GC 就能知道 Heap 中一个对象的引用情况，当一个对象的 Handle 引用发生改变的时候，GC 即可对该对象进行回收或者移动。
 - 在v8源码中，`include/v8.h`定义里模板类`class Local`，代码中有注释，笔者添加中文翻译
 
 ```cpp
@@ -82,6 +85,7 @@ template <class T>
 using Handle = Local<T>;
 ```
 
+- 在`v8/src/objects.h`中，可看，所有js的对象的声明都是需要使用模板，`Handle<Object> object`，这样js的对象就可以被gc管理
 - 上面提到一个javascript的高级特性，闭包，实现外部作用域访问内部作用域中变量的方法。
     + 通过函数式编程，高阶函数返回一个函数对象，该函数引用到高阶函数中声明的变量，外部作用域中，可以通过这个中间函数访问或修改高阶函数的变量。
     + 它的问题在于，一旦有变量引用这个中间函数，这个中间函数将不会释放，高阶函数这个原始作用域也不会释放，作用于中产生的内存占用就不会得到释放，除非不再有引用，才会逐步释放。
@@ -129,6 +133,117 @@ class String16 {
 ```
 
 - 题外话，v8的字符串对象的操作，对于前端项目的平常需求是满足的，但是对于node而言，高并发、大流量的网络字节的处理，是使用stream与Buffer来处理的，而Buffer对象的内存分配不是在v8的堆内存中，而是Node在C++层面实现的，使用slab分配机制，笔者以后详细分析。
+
+#### 作用域
+
+- 从概念上理解，作用域可以看成是一个句柄的容器，在一个作用域里面可以有很多很多个句柄（也就是说，一个 scope 里面可以包含很多很多个 v8 引擎相关的对象），句柄指向的对象是可以一个一个单独地释放的，但是很多时候（真正开始写业务代码的时候），一个一个地释放句柄过于 繁琐，取而代之的是，可以释放一个 scope，那么包含在这个 scope 中的所有 handle 就都会被统一释放掉了。
+- 作用域在v8有： HandleScope，Context::Scope
+- HandleScope 的定义在`v8/src/handles.h`
+
+```cpp
+// After the handle scope of a local handle has been deleted the
+// garbage collector will no longer track the object stored in the
+// handle and may deallocate it.  The behavior of accessing a handle
+// for which the handle scope has been deleted is undefined.
+// 局部作用域的handle scope被销毁后，gc不在追踪存储在handle的对象而且回收它，表现在于访问这个作用域的对象会获得undefined
+class HandleScope {
+ public:
+  explicit inline HandleScope(Isolate* isolate);
+
+  // HandleScope 以链表的方式存储， Isolate是当前的虚拟机
+  Isolate* isolate_;
+  Object** prev_next_;
+  Object** prev_limit_;
+
+  // Close the handle scope resetting limits to a previous state.
+  static inline void CloseScope(Isolate* isolate,
+                                Object** prev_next,
+                                Object** prev_limit);
+
+  // Extend the handle scope making room for more handles.
+  V8_EXPORT_PRIVATE static Object** Extend(Isolate* isolate);
+
+};
+
+```
+
+- 再看一下`HandleScope`是怎么创建`Handle`与获取`Handle`的
+
+```cpp
+Object** HandleScope::CreateHandle(Isolate* isolate, Object* value) {
+  DCHECK(AllowHandleAllocation::IsAllowed());
+  HandleScopeData* data = isolate->handle_scope_data();
+
+  Object** result = data->next;
+  if (result == data->limit) result = Extend(isolate);
+  // Update the current next field, set the value in the created
+  // handle, and return the result.
+  DCHECK(result < data->limit);
+  data->next = result + 1;
+
+  *result = value;
+  return result;
+}
+
+Object** HandleScope::GetHandle(Isolate* isolate, Object* value) {
+  DCHECK(AllowHandleAllocation::IsAllowed());
+  HandleScopeData* data = isolate->handle_scope_data();
+  CanonicalHandleScope* canonical = data->canonical_scope;
+  // 寻找对象 lookup
+  return canonical ? canonical->Lookup(value) : CreateHandle(isolate, value);
+}
+```
+
+#### 上下文Context
+
+- 上面提到了Context这个类，看下源码和注解
+
+```cpp
+/**
+ * A sandboxed execution context with its own set of built-in objects
+ * and functions.
+  context是一个沙盒的执行上下文，放置内置的对象与函数
+ */
+class V8_EXPORT Context {
+ public:
+  /**
+   * Returns the global proxy object.
+      返回一个全局代理对象
+   *
+   * Global proxy object is a thin wrapper whose prototype points to actual
+   * context's global object with the properties like Object, etc. This is done
+   * that way for security reasons (for more details see
+   * https://wiki.mozilla.org/Gecko:SplitWindow).
+   *
+   * Please note that changes to global proxy object prototype most probably
+   * would break VM---v8 expects only global object as a prototype of global
+   * proxy object.
+   */
+  Local<Object> Global();
+
+  //...
+
+  /**
+   * Stack-allocated class which sets the execution context for all
+   * operations executed within a local scope.
+   */
+  class Scope {
+   public:
+    explicit V8_INLINE Scope(Local<Context> context) : context_(context) {
+      context_->Enter();
+    }
+    V8_INLINE ~Scope() { context_->Exit(); }
+
+   private:
+    Local<Context> context_;
+  };
+```
+
+- HandleScope 是用来管理 Handle 的，而 Context::Scope 仅仅用来管理 Context 对象。
+- 一般情况下，函数的开始部分都放一个 HandleScope，这样此函数中的 Handle 就不需要再理会释放资源了。 而 Context::Scope 仅仅做了：在构造中调用 context->Enter()，而在析构函数中调用 context->Exit()。
+- 从概念上讲，这个上下文环境也可以理解为运行环境。在执行 javascript 脚本的时候，总要有一些环境变量或者全局函数。 我们如果要在自己的 c++ 代码中嵌入 v8 引擎，自然希望提供一些 c++ 编写的函数或者模块，让其他用户从脚本中直接调用，这样才会体现出 javascript 的强大。 我们可以用 c++ 编写全局函数或者类，让其他人通过 javascript 进行调用，这样，就无形中扩展了 javascript 的功能。
+- Context 可以嵌套，即当前函数有一个 Context，调用其它函数时如果又有一个 Context，则在被调用的函数中 javascript 是以最近的 Context 为准的，当退出这个函数时，又恢复到了原来的 Context。
+- 我们可以往不同的 Context 里 “导入” 不同的全局变量及函数，互不影响。据说设计 Context 的最初目的是为了让浏览器在解析 HTML 的 iframe 时，让每个 iframe 都有独立的 javascript 执行环境，即一个 iframe 对应一个 Context。
 
 ### 虚拟机
 
