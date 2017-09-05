@@ -77,6 +77,26 @@ their handles.
 */
 template <class T>
 class Local {
+ public:
+  V8_INLINE Local() : val_(0) {} // 没有参数的构造函数，初始化私有成员｀val_｀为０
+  template <class S>
+  V8_INLINE Local(Local<S> that)
+      : val_(reinterpret_cast<T*>(*that)) {　// 传参同样是Local<S>的构造函数，初始化私有成员`val_`为传入的参数，并且检查类型S与T是否一样
+    /**
+     * This check fails when trying to convert between incompatible
+     * handles. For example, converting from a Local<String> to a
+     * Local<Number>.
+     */
+    TYPE_CHECK(T, S);
+  }
+//...
+
+  // 重载操作符`->`，返回私有成员`val_`
+  V8_INLINE T* operator->() const { return val_; }
+
+  // 重载操作符`*`，返回私有成员`val_`
+  V8_INLINE T* operator*() const { return val_; }
+
  // .....
 
  // Handle is an alias for Local for historical reasons.
